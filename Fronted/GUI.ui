@@ -1,0 +1,201 @@
+import sys
+import os
+import json
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTextEdit, QPushButton, QLineEdit, QLabel, QStackedWidget
+)
+from PyQt5.QtGui import QMovie, QIcon, QPixmap, QFont
+from PyQt5.QtCore import Qt, QTimer, QRect
+from dotenv import dotenv_values
+
+# Environment Setup
+env_vars = dotenv_values(".env")
+assistant_name = env_vars.get("Assistantname", "FRIDAY")
+current_dir = os.getcwd()
+TempDirPath = os.path.join(current_dir, "Fronted", "File")
+GraphicsDirPath = os.path.join(current_dir, "Fronted", "Graphics")
+ChatLogPath = os.path.join(current_dir, "Data", "ChatLog.json")
+
+# Ensure directories exist
+os.makedirs(TempDirPath, exist_ok=True)
+os.makedirs(GraphicsDirPath, exist_ok=True)
+os.makedirs(os.path.join(current_dir, "Data"), exist_ok=True)
+
+# Utility Functions
+def AnswerModifier(answer):
+    lines = answer.split('\n')
+    non_empty_lines = [line for line in lines if line.strip()]
+    return '\n'.join(non_empty_lines)
+
+def QueryModifier(query):
+    new_query = query.lower().strip()
+    question_words = ["how", "what", "who", "where", "when", 
+                     "why", "which", "whose", "whom", "can you",
+                     "what's", "where's", "how's"]
+    
+    if any(word in new_query for word in question_words):
+        if not new_query[-1] in ['?', '!', '.']:
+            new_query += '?'
+    return new_query.capitalize()
+
+# Main Application Window
+class FridayUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.current_dir = current_dir
+        self.graphics_path = GraphicsDirPath
+        self.mic_state = True
+        self.initUI()
+        self.load_chat_history()
+
+    def initUI(self):
+        # Main Window Configuration
+        self.setWindowTitle(assistant_name)
+        self.setGeometry(0, 0, 1056, 625)
+
+        # Central Widget
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+
+        # Background Animation
+        self.background = QLabel(central_widget)
+        self.background.setGeometry(QRect(-20, -10, 1101, 681))
+        self.bg_movie = QMovie(os.path.join(self.graphics_path, "bg.gif"))
+        self.background.setMovie(self.bg_movie)
+        self.bg_movie.start()
+
+        # Header Buttons
+        self.create_header_buttons(central_widget)
+
+        # Stacked Widget for Pages
+        self.stacked_widget = QStackedWidget(central_widget)
+        self.stacked_widget.setGeometry(QRect(0, 150, 1056, 300))
+
+        # Create Pages
+        self.create_voice_page()
+        self.create_chat_page()
+
+        # Mic Button
+        self.create_mic_button(central_widget)
+
+        # Apply Styles
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: transparent;
+            }
+            QLabel {
+                color: white;
+            }
+            QPushButton {
+                color: white;
+                font: 700 12pt "Yu Gothic UI";
+                background-color: transparent;
+                border: none;
+            }
+            QTextEdit {
+                background-color: rgba(30, 30, 30, 0.7);
+                color: white;
+                font-family: Consolas;
+                font-size: 12pt;
+                border: none;
+            }
+            QLineEdit {
+                background-color: rgba(30, 30, 30, 0.7);
+                color: white;
+                font-family: Consolas;
+                font-size: 12pt;
+                border: none;
+                padding: 5px;
+            }
+        """)
+
+    def create_header_buttons(self, parent):
+        # Home Button (Voice Interface)
+        self.home_btn = QPushButton("Home", parent)
+        self.home_btn.setGeometry(QRect(340, 70, 121, 61))
+        self.home_btn.setIcon(QIcon(os.path.join(self.graphics_path, "Home.png")))
+        self.home_btn.clicked.connect(lambda: self.stacked_widget.setCurrentIndex(0))
+
+        # Chat Button
+        self.chat_btn = QPushButton("Chat", parent)
+        self.chat_btn.setGeometry(QRect(620, 70, 121, 61))
+        self.chat_btn.setIcon(QIcon(os.path.join(self.graphics_path, "chat.png")))
+        self.chat_btn.clicked.connect(lambda: self.stacked_widget.setCurrentIndex(1))
+
+    def create_mic_button(self, parent):
+        self.mic_btn = QPushButton("Mic On", parent)
+        self.mic_btn.setGeometry(QRect(480, 460, 131, 81))
+        self.mic_btn.setIcon(QIcon(os.path.join(self.graphics_path, "Mic On.png")))
+        self.mic_btn.clicked.connect(self.toggle_mic)
+
+    def create_voice_page(self):
+        # Voice Command Interface
+        voice_page = QWidget()
+        layout = QVBoxLayout(voice_page)
+        layout.setAlignment(Qt.AlignCenter)
+
+        # Voice Status Label
+        self.voice_status = QLabel("Click the mic to start voice commands")
+        self.voice_status.setFont(QFont("Arial", 14))
+        layout.addWidget(self.voice_status)
+
+        self.stacked_widget.addWidget(voice_page)
+
+    def create_chat_page(self):
+        # Chat Interface
+        chat_page = QWidget()
+        layout = QVBoxLayout(chat_page)
+
+        # Chat Display
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        layout.addWidget(self.chat_display)
+
+        # Input Field and Send Button
+        input_layout = QHBoxLayout()
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("Type your message here...")
+        self.chat_input.returnPressed.connect(self.send_message)
+        input_layout.addWidget(self.chat_input)
+
+        self.send_btn = QPushButton("Send")
+        self.send_btn.clicked.connect(self.send_message)
+        input_layout.addWidget(self.send_btn)
+
+        layout.addLayout(input_layout)
+        self.stacked_widget.addWidget(chat_page)
+
+    def send_message(self):
+        message = self.chat_input.text().strip()
+        if message:
+            self.chat_display.append(f"You: {message}")
+            self.chat_input.clear()
+            # Add logic to process message and get response
+            self.chat_display.append(f"{assistant_name}: Processing...")
+
+    def toggle_mic(self):
+        self.mic_state = not self.mic_state
+        if self.mic_state:
+            self.mic_btn.setText("Mic On")
+            self.mic_btn.setIcon(QIcon(os.path.join(self.graphics_path, "Mic On.png")))
+            self.voice_status.setText("Listening...")
+        else:
+            self.mic_btn.setText("Mic Off")
+            self.mic_btn.setIcon(QIcon(os.path.join(self.graphics_path, "Mic Off.png")))
+            self.voice_status.setText("Mic is off")
+
+    def load_chat_history(self):
+        try:
+            with open(ChatLogPath, "r") as f:
+                chat_data = json.load(f)
+                for message in chat_data:
+                    self.chat_display.append(f"{message.get('role', 'unknown')}: {message.get('content', '')}")
+        except Exception as e:
+            print(f"Error loading chat history: {e}")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = FridayUI()
+    window.show()
+    sys.exit(app.exec_())
